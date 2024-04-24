@@ -3,12 +3,12 @@
 # Author: Xiaojie(J) Gao
 # Date: 2021-11-19
 #*******************************************************************************
-# library(httr)
-# library(jsonlite)
-# library(tools)
-# library(rgdal)
-# library(geojsonio)
-# library(geojsonR)
+require(httr)
+require(jsonlite)
+require(tools)
+require(terra)
+require(geojsonio)
+require(geojsonR)
 
 
 #' @examples
@@ -88,14 +88,16 @@
 #' 
 
 
-appeears_api_url <- "https://lpdaacsvc.cr.usgs.gov/appeears/api/"
+appeears_api_url <- "https://appeears.earthdatacloud.nasa.gov/api/"
 
 
 # List all available products
 # Return a list
 QueryALLProducts <- function() {
     # Request the info of all products from product service
-    prods_req <- httr::GET(paste0(appeears_api_url, "product"))
+    prods_req <- httr::GET(paste0(appeears_api_url, "product"), 
+        query = list(pretty = TRUE)
+    )
     # Retrieve the content of request
     prods_content <- httr::content(prods_req) 
 
@@ -118,7 +120,9 @@ QueryProducts <- function(filter = "") {
 
 # Query available layers in a product
 QueryLayers <- function(product_name) {
-    req <- httr::GET(paste0(appeears_api_url, "product/", product_name))
+    req <- httr::GET(paste0(appeears_api_url, "product/", product_name),
+        query = list(pretty = TRUE)
+    )
     cont <- httr::content(req)
 
     return(cont)
@@ -127,7 +131,9 @@ QueryLayers <- function(product_name) {
 
 # Query available projections
 QueryProjections <- function() {
-    req <- httr::GET(paste0(appeears_api_url, "spatial/proj"))
+    req <- httr::GET(paste0(appeears_api_url, "spatial/proj"), 
+        query = list(pretty = TRUE)
+    )
     req_cont <- httr::content(req)
 
     projs <- jsonlite::fromJSON(jsonlite::toJSON(req_cont, auto_unbox = TRUE))
@@ -194,11 +200,17 @@ SubmitTask <- function(token, task_name, task_type = "point",
     # Format Dates
     dates <- data.frame(startDate = start_date, endDate = end_date)
 
-    if (tolower(task_name) == "point") { # ~ Point tasks
+    if (tolower(task_type) == "point") { # ~ Point tasks
         # Create a list of data frames
-        task_info <- list(dates = dates, layers = layers, coordinates = pts_df)
+        task_info <- list(
+            dates = dates, 
+            layers = layers, 
+            coordinates = point_df
+        )
         # Create a nested list
-        task <- list(params = task_info, task_name = task_name, 
+        task <- list(
+            params = task_info, 
+            task_name = task_name, 
             task_type = task_type
         )
 
@@ -217,16 +229,12 @@ SubmitTask <- function(token, task_name, task_type = "point",
         task_response <- jsonlite::prettify(
             jsonlite::toJSON(task_content, auto_unbox = TRUE)
         )
+        print(jsonlite::prettify(task_response))
 
-        return(task_response)
     } else if (tolower(task_type) == "area") { # ~ Area tasks
         # read the polygon file
-        if (file_ext(polygon_file) == "geojson") {
-            polygon_f <- rgdal::readOGR(polygon_file)
-        } else if (file_ext(polygon_file) == "shp") {
-            polygon_f <- rgdal::readOGR(dsn = dirname(polygon_file), 
-                layer = tools::file_path_sans_ext(basename(polygon_file))
-            )
+        if (tools::file_ext(polygon_file %in% c("geojson", "shp"))) {
+            polygon_f <- terra::vect(polygon_file)
         } else {
             stop("Please provide a valid shp or geojson file!")
         }
@@ -262,7 +270,7 @@ SubmitTask <- function(token, task_name, task_type = "point",
 
         task_content <- httr::content(response)
         task_response <- jsonlite::toJSON(task_content, auto_unbox = TRUE)
-        prettify(task_response)
+        print(jsonlite::prettify(task_response))
     }
 }
 
@@ -291,14 +299,14 @@ CheckTaskStatus <- function(token, limit, task_name = NULL, brief = FALSE) {
             )
             return(my_task_df_b)
         } else {
-            return(prettify(my_task_json))
+            return(jsonlite::prettify(my_task_json))
         }
     }
 
     if (brief == TRUE) {
         return(response_df[, c("task_name", "status", "task_id")])
     } else {
-        return(prettify(jsonlite::toJSON(response_content)))
+        return(jsonlite::prettify(jsonlite::toJSON(response_content)))
     }
 }
 
@@ -330,7 +338,7 @@ DownloadTask <- function(token, task_id, out_dir) {
     )
     response_content <- httr::content(response)
     bundle_response <- jsonlite::toJSON(response_content, auto_unbox = TRUE)
-    prettify(bundle_response)
+    print(jsonlite::prettify(bundle_response))
 
     bundle <- jsonlite::fromJSON(bundle_response)$files
     for (id in bundle$file_id) {
@@ -342,8 +350,8 @@ DownloadTask <- function(token, task_id, out_dir) {
         # write the file to disk using the destination directory and file name
         response <- httr::GET(
             paste0(appeears_api_url, "bundle/", task_id, "/", id),
-            write_disk(filepath, overwrite = TRUE),
-            progress(),
+            httr::write_disk(filepath, overwrite = TRUE),
+            httr::progress(),
             httr::add_headers(Authorization = token)
         )
     }
